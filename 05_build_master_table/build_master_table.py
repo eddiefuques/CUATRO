@@ -7,11 +7,17 @@ DESCRIPTION:
     Deep6, and ViraLM) into a single master table with consensus scoring,
     confidence tiers, and per-tool agreement metrics.
 
-    Confidence tiers (assigned by tool agreement and score thresholds):
-      A_high-confidence_viral       — Consensus viral calls (2+ tools agree)
-      B_medium-confidence_viral     — One backbone + ≥ 1 support tool
-      C_probable_viral              — Partial evidence (Deep6 + ViraLM only)
-      D_unknown                     — Ambiguous or no viral signal
+    Confidence tiers (assigned by tool agreement and score thresholds).
+    Backbone tools are VirSorter2 and geNomad; support tools are Deep6 and
+    ViraLM. Rules are evaluated in order and the first match wins:
+      D_plasmid_flagged             — geNomad plasmid flag without backbone
+                                      consensus (checked before the A rules)
+      A_high-confidence_viral       — Both backbone tools, OR one backbone tool
+                                      with a high score and >= 1 hallmark gene
+      B_medium-confidence_viral     — One backbone tool corroborated by at
+                                      least one support tool
+      C_probable_viral              — Both support tools, no backbone call
+      D_unknown                     — No viral signal, or no rule matched
 
 TOOLS & INPUTS:
     VirSorter2      — {vs2_dir}/{sample}_virsorter2_out/final-viral-score.tsv
@@ -37,7 +43,6 @@ OPTIONAL ARGUMENTS:
     --deep6_factor              Deep6 top-score multiplier for viral call (default: 1.25)
     --deep6_min_score           Deep6 minimum absolute score (default: 0.70)
     --viralm_min                ViraLM score threshold (default: 0.70)
-    --length_short              Minimum length for tier B support (default: 2500 bp)
     --require_all_tools         Filter to samples with all 4 tools completed (default: True)
 
 OUTPUT:
@@ -344,7 +349,7 @@ def parse_viralm(pools, viralm_dir, fasta_suffix, viralm_min):
 # TIER ASSIGNMENT
 # ─────────────────────────────────────────────────────────────────────────────
 
-def assign_tiers(master, vs2_high, length_short):
+def assign_tiers(master, vs2_high):
     """
     Assign confidence tiers based on tool agreement and score thresholds.
     """
@@ -359,7 +364,6 @@ def assign_tiers(master, vs2_high, length_short):
         gmd_sc = float(row.get("genomad_virus_score", 0) or 0)
         vs2_h = float(row.get("vs2_hallmark", 0) or 0)
         gmd_h = float(row.get("genomad_n_hallmarks", 0) or 0)
-        length = float(row.get("length_bp", 0) or 0)
 
         support_any = d6 or vlm
         support_both = d6 and vlm
@@ -384,16 +388,9 @@ def assign_tiers(master, vs2_high, length_short):
         if vs2 and vs2_sc >= vs2_high and vs2_h >= 1:
             return "A_high-confidence_viral"
 
-        # Medium confidence: one major tool + secondary support
+        # Medium confidence: one backbone tool corroborated by a support
+        # tool. A backbone call alone is not sufficient.
         if (vs2 or gmd) and support_any:
-            return "B_medium-confidence_viral"
-
-        # Medium confidence: one major tool + length support
-        if (vs2 or gmd) and length >= length_short:
-            return "B_medium-confidence_viral"
-
-        # Medium confidence: one major tool alone
-        if vs2 or gmd:
             return "B_medium-confidence_viral"
 
         # Probable: secondary tools agree
@@ -448,8 +445,6 @@ def main():
                         help="Deep6 minimum absolute score (default: 0.70)")
     parser.add_argument("--viralm_min", type=float, default=0.70,
                         help="ViraLM score threshold (default: 0.70)")
-    parser.add_argument("--length_short", type=int, default=2500,
-                        help="Minimum length for tier B support (default: 2500 bp)")
     parser.add_argument("--require_all_tools", dest="require_all_tools",
                         action="store_true", default=True,
                         help="Only build the table from samples that have output from "
@@ -536,7 +531,7 @@ def main():
             master[col] = master[col].fillna(False).astype(bool)
 
     # Assign confidence tiers
-    master = assign_tiers(master, args.vs2_high, args.length_short)
+    master = assign_tiers(master, args.vs2_high)
 
     # Print summary
     print("\n" + "=" * 60)

@@ -1,6 +1,12 @@
-# Viral Contig Classification — Multi-tool Approach
+# CUATRO
 
-A bioinformatics pipeline for identifying and quality-filtering viral contigs from assembled metagenomes, combining four independent viral classifiers with a confidence tier system. Works with both RNA and DNA viromes.
+**Tiered viral sequence detection for metagenomic contigs.**
+
+CUATRO combines four classifiers — VirSorter2 and geNomad for marker-gene
+content, Deep6 and ViraLM for sequence composition — and assigns each contig to
+one of four confidence tiers rather than making a binary viral call. Detection
+does not require a contig to match a described viral sequence. Works with RNA
+and DNA viromes.
 
 ---
 
@@ -8,15 +14,31 @@ A bioinformatics pipeline for identifying and quality-filtering viral contigs fr
 
 **Starting point: assembled contigs (FASTA format).** This pipeline does not include a read processing or assembly step — it picks up from wherever you have assembled contigs. If you need to go from raw FASTQ reads to assembled contigs, see the companion repository: [rna-virome-blastx-pipeline](https://github.com/eddiefuques/rna-virome-blastx-pipeline), which includes QC, trimming, normalization, and rnaSPAdes assembly.
 
-Viral identification is done by running four classifiers independently and then merging their results into a single master table. Every contig receives a confidence tier based on how many tools agree it is viral. The pipeline is particularly suited for discovering novel and divergent viruses that may have little or no similarity to sequences in reference databases — cases where a BLAST-based approach would miss them entirely.
+The four classifiers run independently and their results are merged into a
+single master table. Each contig receives a confidence tier reflecting which
+tools called it viral.
+
+The classifiers divide into two kinds, and the tier system treats them
+differently. **VirSorter2 and geNomad** score viral marker-gene content against
+profile databases; they are the *backbone* tools, and no contig reaches a viral
+tier without one of them. **Deep6 and ViraLM** score sequence composition using
+models trained on viral genomes and query no database at run time; they are
+*support* tools, independent of each other in training data and architecture.
+
+CUATRO identifies viral sequences; it does not classify them. The
+`genomad_taxonomy` column is passed through from geNomad as a provisional
+marker-based annotation, not a taxonomic assignment, and no viral species are
+delimited. The host screen flags contigs without removing them, and tier
+assignment ranks contigs without discarding them.
 
 ---
 
 ## When to use this pipeline
 
 - Your starting material is already assembled (any assembler, any library type)
-- You want to identify viruses beyond those in reference databases
-- You need orthogonal validation from multiple independent methods
+- You expect divergent viruses with no close relative in reference databases
+- You need orthogonal validation from independent methods
+- You want a graded call with the evidence attached, not a yes/no verdict
 - Your data includes DNA viruses, RNA viruses, or both
 
 ---
@@ -41,11 +63,11 @@ Assembled contigs (FASTA, ≥ 500 bp)
     ▼
     Confidence tiers:
       A — High confidence   Both backbone tools (VS2 + geNomad)
-                            OR solo call with score ≥ 0.9 + ≥ 1 hallmark gene
-      B — Medium            One backbone + ≥ 1 support tool
-                            OR one backbone + contig length ≥ 2500 bp
+                            OR one backbone, high score + ≥ 1 hallmark gene
+      B — Medium            One backbone tool + >= 1 support tool
       C — Probable viral    Both support tools agree (Deep6 + ViraLM), no backbone
-      D — Unknown/plasmid   ≤ 1 tool, or geNomad plasmid flag
+      D — Unknown/plasmid   No tool called it, or geNomad plasmid flag
+                            without backbone consensus
     │
     ▼
 06  extract_viral_contigs.py  Filter to ≥ 1 kb; extract per-tier FASTAs (A, B, C, AB, ABC)
@@ -92,13 +114,6 @@ bash 04_viralm/run_viralm.sh
 ```
 
 ### 2b. (Optional but recommended for host-associated samples) Host screen
-
-Vertebrate and invertebrate genomes carry endogenous viral elements — endogenous
-retroviruses above all — which VirSorter2 and geNomad score as viral because, by
-sequence, they are. They are the standard false-positive class in host-associated
-virome work, and read-level host removal does not catch them: unspliced aligners
-(bowtie2, bwa) also miss host mRNA reads spanning exon junctions, so host
-transcripts survive filtering and assemble.
 
 This step aligns contigs to the host genome and records, per contig, the fraction
 covered by its best alignment. It removes nothing — the flags travel with the
@@ -149,7 +164,9 @@ All classification thresholds are configurable (see `--help`). Defaults reflect 
 | `--genomad_min` | 0.7 | geNomad min virus_score |
 | `--deep6_factor` | 1.25 | Deep6 top score must be ≥ 1.25× median |
 | `--deep6_min_score` | 0.70 | Deep6 absolute score floor |
+| `--vs2_high` | 0.9 | VirSorter2 score for a Tier A solo call |
 | `--viralm_min` | 0.70 | ViraLM min virus_score (more stringent than tool default) |
+| `--genomad_plasmid` | 0.7 | geNomad plasmid_score above which the plasmid flag is set |
 
 By default the table is built only from samples that have output from all four
 tools; samples missing a tool are listed and skipped. Pass `--allow_missing_tools`
@@ -226,6 +243,41 @@ Per-tier FASTA files are also produced for downstream analyses (phylogenetics, g
 
 ---
 
+## How tiers are assigned
+
+Rules are evaluated in order; the first match wins.
+
+| # | Condition | Tier |
+|---|---|---|
+| 1 | No tool called the contig viral | `D_unknown` |
+| 2 | geNomad plasmid flag set, **and** not both backbone tools calling | `D_plasmid_flagged` |
+| 3 | VirSorter2 **and** geNomad both call it | `A_high-confidence_viral` |
+| 4 | geNomad calls it, `virus_score ≥ 0.9`, ≥ 1 hallmark gene | `A_high-confidence_viral` |
+| 5 | VirSorter2 calls it, score ≥ `--vs2_high`, ≥ 1 hallmark gene | `A_high-confidence_viral` |
+| 6 | One backbone tool **and** ≥ 1 support tool | `B_medium-confidence_viral` |
+| 7 | Deep6 **and** ViraLM both call it, no backbone | `C_probable_viral` |
+| 8 | Anything else | `D_unknown` |
+
+The organising principle is agreement between kinds of evidence. Tier A is two
+marker-based lines agreeing, or one with hallmark genes. Tier B is one
+marker-based line corroborated by one composition-based line. Tier C is
+composition-based evidence alone. A backbone call on its own does not reach a
+viral tier.
+
+Two ordering details:
+
+- The plasmid rule is evaluated before the Tier A rules, so a plasmid-flagged
+  contig with a single strong backbone call is assigned `D_plasmid_flagged`.
+  Only agreement between both backbone tools overrides the flag.
+- The geNomad threshold for a Tier A solo call is hardcoded at 0.9, while the
+  VirSorter2 equivalent is exposed as `--vs2_high`.
+
+Tiers rank candidates; they do not certify them. Tier A and Tier B differ in
+quality, and the host screen (step 00) is recommended for host-associated
+samples regardless of tier.
+
+---
+
 ## Assumptions and gotchas
 
 **Each classifier needs its own environment.** VirSorter2, Deep6 and ViraLM have
@@ -272,15 +324,30 @@ See `environment.yml` for the full install instructions and database download co
 
 ---
 
-## Citations
+## Citing CUATRO
 
-If you use this pipeline, please also cite the individual tools:
+
+
+> Fuques E. (2026). CUATRO: tiered viral sequence detection for metagenomic
+> contigs. Zenodo. doi:TBD
+
+---
+
+## Citing the underlying tools
+
+Please also cite the tools CUATRO calls:
 
 - **VirSorter2:** Guo J. *et al.* (2021). VirSorter2: a multi-classifier, expert-guided approach to detect diverse DNA and RNA viruses. *Microbiome* 9:37. https://doi.org/10.1186/s40168-020-00990-y
-- **Deep6:** Teunisse E. *et al.* (2023). Deep6: Classification of Metatranscriptomic Sequences into Cellular Empires and Viral Realms Using Deep Learning Models. *Microbiol Resour Announc* 12:e01079-22. https://doi.org/10.1128/mra.01079-22 | [GitHub](https://github.com/janfelix/Deep6)
-- **geNomad:** Camargo A.P. *et al.* (2023). Identification of mobile genetic elements with geNomad. *Nature Biotechnology* 41:1303–1312. https://doi.org/10.1038/s41587-023-01953-y
+- **Deep6:** Finke J.F., Kellogg C.T.E. & Suttle C.A. (2023). Deep6: Classification of Metatranscriptomic Sequences into Cellular Empires and Viral Realms Using Deep Learning Models. *Microbiol Resour Announc* 12:e01079-22. https://doi.org/10.1128/mra.01079-22 | [GitHub](https://github.com/janfelix/Deep6)
+- **geNomad:** Camargo A.P. *et al.* (2024). Identification of mobile genetic elements with geNomad. *Nature Biotechnology* 42:1303–1312. https://doi.org/10.1038/s41587-023-01953-y
 - **ViraLM:** Peng C. *et al.* (2024). ViraLM: empowering virus discovery through the genome foundation model. *Bioinformatics* 40(12):btae704. https://doi.org/10.1093/bioinformatics/btae704 | [GitHub](https://github.com/ChengPENG-wolf/ViraLM)
 - **CheckV:** Nayfach S. *et al.* (2021). CheckV assesses the quality and completeness of metagenome-assembled viral genomes. *Nature Biotechnology* 39:578–585. https://doi.org/10.1038/s41587-020-00774-7
+
+---
+
+## License
+
+Released under the MIT License — see [LICENSE](LICENSE).
 
 ---
 

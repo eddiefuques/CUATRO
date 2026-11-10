@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "CUATRO"
+abstract: >-
+  Tiered viral sequence detection for metagenomic contigs. CUATRO combines
+  four classifiers - VirSorter2 and geNomad for marker-gene content, Deep6 and
+  ViraLM for sequence composition - and assigns each contig to one of four
+  confidence tiers.
+authors:
+  - family-names: "Fuques"
+    given-names: "Eddie"
+    orcid: https://orcid.org/0000-0002-2638-1863
+    affiliation: "University of California, Santa Barbara"
+version: "1.0.0"
+date-released: "2026-11-10"
+license: MIT
+repository-code: "https://github.com/eddiefuques/viral-contig-classification"
+url: "https://github.com/eddiefuques/viral-contig-classification"
+keywords:
+  - virome
+  - metagenomics
+  - virus discovery
+  - viral metagenomics
+  - sequence classification
+  - bioinformatics pipeline
