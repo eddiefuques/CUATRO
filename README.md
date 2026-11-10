@@ -326,10 +326,10 @@ See `environment.yml` for the full install instructions and database download co
 
 ## Citing CUATRO
 
-
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24095348.svg)](https://doi.org/10.5281/zenodo.24095348)
 
 > Fuques E. (2026). CUATRO: tiered viral sequence detection for metagenomic
-> contigs. Zenodo. doi:TBD
+> contigs (v1.0.0). Zenodo. doi:10.5281/zenodo.24095349
 
 ---
 
