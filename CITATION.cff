@@ -11,6 +11,7 @@ authors:
   - family-names: "Fuques"
     given-names: "Eddie"
     orcid: https://orcid.org/0000-0002-2638-1863
+    doi: "10.5281/zenodo.24095348"
     affiliation: "University of California, Santa Barbara"
 version: "1.0.0"
 date-released: "2026-11-10"
